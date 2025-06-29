@@ -36,9 +36,9 @@ def generate_novel(prompt, max_new_tokens=1000, num_turns=3):
         outputs = model.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
-            temperature=0.95,
-            top_p=0.9,
-            repetition_penalty=1.2,
+            temperature=0.8,
+            top_p=0.8,
+            repetition_penalty=1.1,
             no_repeat_ngram_size=3,
             pad_token_id=tokenizer.pad_token_id,  # 显式传入已设置的pad_token_id
             eos_token_id=tokenizer.eos_token_id
@@ -50,5 +50,5 @@ def generate_novel(prompt, max_new_tokens=1000, num_turns=3):
 
 # -------------------------- 3. 测试生成 --------------------------
 prompt = "林小夏在车祸中醒来，发现自己躺在古代的木床上……"
-novel = generate_novel(prompt.strip(), max_new_tokens=1000, num_turns=3)
+novel = generate_novel(prompt.strip(), max_new_tokens=500, num_turns=1)
 print(novel)
