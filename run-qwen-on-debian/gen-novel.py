@@ -41,19 +41,29 @@ novel_outline = [
 
 # -------------------------- 3. 生成函数（重构版） --------------------------
 def generate_chapter(prompt, max_new_tokens=1024):
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=model.config.max_position_embeddings - max_new_tokens).to(model.device)
+    # 使用Qwen的聊天模板来格式化输入
+    messages = [
+        {"role": "system", "content": "你是一位专业的中文网络小说作家，只专注于创作穿越题材小说。必须用中文写作，严格遵循用户提供的情节大纲，不讨论任何与小说创作无关的内容，不输出英文。"},
+        {"role": "user", "content": prompt}
+    ]
+    
+    # 应用聊天模板
+    formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    
+    inputs = tokenizer(formatted_prompt, return_tensors="pt", truncation=True, max_length=model.config.max_position_embeddings - max_new_tokens).to(model.device)
     
     outputs = model.generate(
         inputs.input_ids,
         max_new_tokens=max_new_tokens,
-        temperature=0.75,
+        temperature=0.7,
         top_p=0.8,
         repetition_penalty=1.1,
+        no_repeat_ngram_size=3,
         pad_token_id=tokenizer.pad_token_id,
         eos_token_id=tokenizer.eos_token_id
     )
     
-    # 只解码生成的部分，不包含prompt
+    # 只解码生成的部分，不包含prompt，这是最稳妥的方式
     generated_text = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
     return generated_text
 
