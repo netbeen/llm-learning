@@ -1,5 +1,5 @@
 # 检查是否在 git 根目录运行
-if [ ! -d .git ] || [ "$(git rev-parse --show-toplevel)" != "$(pwd)" ]; then
+if [ ! -d .git ] || [ "$(git rev-parse --show-toplevel)" != "$(pwd -P)" ]; then
   echo "错误：请在 git 仓库的根目录下运行此脚本。"
   echo "例如：cd /path/to/your/git/repo && sh run-qwen-on-debian/1-install-dependencies.sh"
   exit 1
