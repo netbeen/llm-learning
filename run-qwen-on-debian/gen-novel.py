@@ -12,6 +12,25 @@ if not os.path.isdir(model_name_or_path):
     raise FileNotFoundError(f"本地模型文件夹不存在: {model_name_or_path}")
 
 tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True, local_files_only=True)
+
+# -- 手动设置聊天模板 --
+# 解决本地加载时tokenizer.chat_template可能为空的问题
+if tokenizer.chat_template is None:
+    qwen_template = (
+        "{% for message in messages %}"
+        "{% if message['role'] == 'system' %}"
+        "{{'<|im_start|>system\n' + message['content'] + '<|im_end|>\n'}}"
+        "{% elif message['role'] == 'user' %}"
+        "{{'<|im_start|>user\n' + message['content'] + '<|im_end|>\n'}}"
+        "{% elif message['role'] == 'assistant' %}"
+        "{{'<|im_start|>assistant\n' + message['content'] + '<|im_end|>\n'}}"
+        "{% endif %}"
+        "{% endfor %}"
+        "{% if add_generation_prompt %}"
+        "{{'<|im_start|>assistant\n'}}"
+        "{% endif %}"
+    )
+    tokenizer.chat_template = qwen_template
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
