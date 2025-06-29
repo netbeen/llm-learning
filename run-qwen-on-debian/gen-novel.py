@@ -49,7 +49,7 @@ def generate_chapter(prompt_messages):
     ).to(model.device)
 
     # -- 关键修复：同时使用默认EOS和Qwen特定的<|im_end|>作为停止符 --
-    eos_token_ids = [tokenizer.eos_token_id, 151645]
+    eos_token_ids = [t for t in [tokenizer.eos_token_id, 151645] if t is not None]
 
     # 生成文本
     outputs = model.generate(
