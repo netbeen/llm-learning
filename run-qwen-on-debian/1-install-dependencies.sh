@@ -1,3 +1,10 @@
+# 检查是否在 git 根目录运行
+if [ ! -d .git ] || [ "$(git rev-parse --show-toplevel)" != "$(pwd)" ]; then
+  echo "错误：请在 git 仓库的根目录下运行此脚本。"
+  echo "例如：cd /path/to/your/git/repo && sh run-qwen-on-debian/1-install-dependencies.sh"
+  exit 1
+fi
+
 # 更新系统并安装依赖
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y python3 python3-pip python3-venv git
