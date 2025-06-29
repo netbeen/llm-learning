@@ -10,7 +10,7 @@ model_name_or_path = os.path.join(script_dir, "qwen-7b")
 if not os.path.isdir(model_name_or_path):
     raise FileNotFoundError(f"本地模型文件夹不存在: {model_name_or_path}")
 
-tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True, local_files_only=True)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
@@ -19,7 +19,8 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map="auto",
     torch_dtype=torch.float16,
     low_cpu_mem_usage=True,
-    trust_remote_code=True
+    trust_remote_code=True,
+    local_files_only=True
 )
 model.eval()
 
