@@ -4,7 +4,8 @@ import os
 
 # -------------------------- 1. 模型和tokenizer加载 --------------------------
 script_dir = os.path.dirname(os.path.abspath(__file__))
-model_name_or_path = os.path.join(script_dir, "qwen-7b")
+project_root = os.path.dirname(script_dir)
+model_name_or_path = os.path.join(project_root, "qwen-7b")
 
 # -- 检查本地模型路径是否存在 --
 if not os.path.isdir(model_name_or_path):
