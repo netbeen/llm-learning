@@ -5,5 +5,5 @@ if [ ! -d .git ] || [ "$(git rev-parse --show-toplevel)" != "$(pwd -P)" ]; then
   exit 1
 fi
 
-. ~/qwen_env/bin/activate
+. ./qwen_env/bin/activate
 python run-qwen-on-debian/gen-novel.py
