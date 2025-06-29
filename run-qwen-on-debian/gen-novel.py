@@ -31,87 +31,93 @@ if tokenizer.chat_template is None:
         "{% endif %}"
     )
     tokenizer.chat_template = qwen_template
-if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.eos_token
 
 model = AutoModelForCausalLM.from_pretrained(
     model_name_or_path,
+    torch_dtype="auto",
     device_map="auto",
-    torch_dtype=torch.float16,
-    low_cpu_mem_usage=True,
     trust_remote_code=True,
     local_files_only=True
 )
-model.eval()
 
-# -------------------------- 2. 小说大纲和设定 --------------------------
-novel_outline = [
-    {
-        "chapter": 1,
-        "title": "异世惊梦",
-        "prompt": "你是一位顶级的中文网络小说家。请以专业的文笔，接着以下故事开篇，续写《穿越之我是技术总监》第一章【异世惊梦】的内容。\n\n**故事开篇:**\n李明揉了揉酸涩的眼睛，显示器上的代码像一群不知疲倦的蚂蚁，仍在不知疲倦地爬行。作为公司的技术总监，996早已是家常便饭。他端起桌上早已冰凉的咖啡，猛灌一口，试图驱散深夜的困意。就在这时，一股强烈的眩晕感袭来，他眼前的代码瞬间扭曲、碎裂，化为一片黑暗。\n\n**续写要求:**\n1.  **环境描写:** 必须详细描写李明醒来后所见的古代房间环境（如雕花木床、古朴桌椅、摇曳烛火、丝质衣物），以此突出古今环境的巨大反差和心理冲击。\n2.  **内心刻画:** 必须重点刻画主角从困惑、震惊到尝试用逻辑分析现状的内心过程，他可能会怀疑是幻觉或恶作剧。\n3.  **关键行动:** 必须描写他起身走向铜镜，并从镜中看到一张完全陌生的古代人面孔，这个情节是让他认识到穿越现实的关键。\n\n请严格遵循以上三点要求，用纯中文进行创作，不要涉及任何无关的讨论或输出英文。"
-    },
-    {
-        "chapter": 2,
-        "title": "初探虚实",
-        "prompt": "你是一位顶级的中文网络小说家。这是《穿越之我是技术总监》的第二章【初探虚实】的创作任务。\n\n**紧接上一章内容:**\n{previous_chapter_content}\n\n**本章续写要求:**\n1.  **稳定情绪与分析:** 必须描写李明在确认穿越后，如何运用其作为技术总监的强大心理素质和逻辑思维能力，强迫自己冷静并分析处境。\n2.  **首次互动与信息获取:** 必须设计一个丫鬟推门而入的场景。通过这次互动，李明需要通过巧妙的、不暴露身份的提问（如“我睡了多久？”、“这是何处？”），获取关于当前时间、地点和自身身份的关键信息。\n3.  **信息整合与推理:** 丫鬟离开后，必须描写李明整合获取到的零碎信息，并进行逻辑推理，从而对自己的新身份和所处世界形成一个初步认知。\n\n请严格遵循以上三点要求，用纯中文进行创作，确保故事的连贯性和逻辑性。"
-    }
-]
+# -------------------------- 2. 小说生成函数 --------------------------
+def generate_chapter(prompt_messages):
+    """根据提供的消息生成小说章节"""
+    # 使用聊天模板格式化输入
+    input_ids = tokenizer.apply_chat_template(
+        prompt_messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
+    ).to(model.device)
 
-# -------------------------- 3. 生成函数（重构版） --------------------------
-def generate_chapter(prompt, max_new_tokens=1024):
-    # 简化prompt结构，直接使用user角色传递所有指令
-    messages = [
-        {"role": "user", "content": prompt}
-    ]
-    
-    # 应用聊天模板
-    formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    
-    inputs = tokenizer(formatted_prompt, return_tensors="pt", truncation=True, max_length=model.config.max_position_embeddings - max_new_tokens).to(model.device)
-    
+    # -- 关键修复：同时使用默认EOS和Qwen特定的<|im_end|>作为停止符 --
+    eos_token_ids = [tokenizer.eos_token_id, 151645]
+
+    # 生成文本
     outputs = model.generate(
-        inputs.input_ids,
-        max_new_tokens=max_new_tokens,
+        input_ids,
+        max_new_tokens=2048,
+        do_sample=True,
         temperature=0.7,
         top_p=0.8,
-        repetition_penalty=1.1,
-        no_repeat_ngram_size=3,
-        pad_token_id=tokenizer.pad_token_id,
-        eos_token_id=tokenizer.eos_token_id
+        eos_token_id=eos_token_ids,
+        pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
     )
     
-    # 只解码生成的部分，不包含prompt，这是最稳妥的方式
-    generated_text = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
-    return generated_text
+    response = outputs[0][input_ids.shape[-1]:]
+    return tokenizer.decode(response, skip_special_tokens=True)
 
-# -------------------------- 4. 主程序：按大纲生成小说 --------------------------
-def main():
-    full_novel_content = ""
-    previous_chapter_text = ""
-    print("--- 开始生成小说《穿越之我是技术总监》 ---\n")
-
-    for chapter_info in novel_outline:
-        print(f"--- 正在生成第 {chapter_info['chapter']} 章：{chapter_info['title']} ---")
-        
-        # 构建当前章节的prompt
-        current_prompt = chapter_info["prompt"].replace("{previous_chapter_content}", previous_chapter_text)
-        
-        # 生成章节内容
-        chapter_content = generate_chapter(current_prompt)
-        
-        # 打印并保存
-        print(chapter_content)
-        print("\n" + "-"*20 + "\n")
-        
-        full_novel_content += f"## 第 {chapter_info['chapter']} 章：{chapter_info['title']}\n\n{chapter_content}\n\n"
-        previous_chapter_text = chapter_content # 为下一章做准备
-
-    # 可以选择将完整小说保存到文件
-    with open("穿越之我是技术总监.txt", "w", encoding="utf-8") as f:
-        f.write(full_novel_content)
-    
-    print("--- 小说生成完毕，已保存至 `穿越之我是技术总监.txt` ---")
-
+# -------------------------- 3. 主程序 --------------------------
 if __name__ == "__main__":
-    main()
+    novel_title = "穿越之我是技术总监"
+    novel_file = os.path.join(project_root, f"{novel_title}.txt")
+
+    # -- 小说情节大纲和角色设定 --
+    novel_outline = {
+        "title": novel_title,
+        "protagonist": {
+            "name": "林天宇",
+            "background": "现代世界的顶尖软件架构师，技术总监（CTO）",
+            "personality": "冷静、理性、逻辑思维能力强，善于解决复杂问题"
+        },
+        "setting": "一个类似古代中国的世界，但拥有一些独特的能量体系（例如‘气’或‘灵力’），技术水平落后。",
+        "plot_summary": "林天宇意外穿越到这个古代世界，成为一个没落贵族家庭的子弟。他利用自己的现代技术知识，结合这个世界的能量体系，开创了一条独特的‘科技修仙’之路，最终成为影响整个世界格局的关键人物。",
+        "chapter_1_title": "第一章：异世惊魂"
+    }
+
+    # -- System Prompt: 设定模型角色和任务 --
+    system_prompt = "你是一位专业的中文网络小说作家，你的任务是根据我提供的大纲和要求，创作一部高质量的穿越题材小说。请严格遵守以下规则：\n1. 只专注于小说创作，不要进行任何与剧情无关的讨论或解释。\n2. 必须使用简体中文进行创作。\n3. 严格遵循我提供的角色设定和情节大纲。\n4. 不要输出任何英文或代码。"
+
+    # -- User Prompt: 提供具体的创作指令 --
+    user_prompt = f"""
+    请根据以下设定，创作小说《{novel_outline['title']}》的第一章，章节标题为《{novel_outline['chapter_1_title']}》。
+
+    **主角设定**：
+    - 姓名：{novel_outline['protagonist']['name']}
+    - 背景：{novel_outline['protagonist']['background']}
+    - 性格：{novel_outline['protagonist']['personality']}
+
+    **世界背景**：
+    {novel_outline['setting']}
+
+    **故事大纲**：
+    {novel_outline['plot_summary']}
+
+    请开始创作第一章：
+    """
+
+    # -- 构建符合ChatML格式的对话 --
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+    print("正在生成小说第一章...")
+    chapter_content = generate_chapter(messages)
+    print("生成完毕！")
+
+    # -- 保存小说内容 --
+    with open(novel_file, "w", encoding="utf-8") as f:
+        f.write(f"# {novel_outline['title']}\n\n")
+        f.write(f"## {novel_outline['chapter_1_title']}\n\n")
+        f.write(chapter_content)
+
+    print(f"小说已保存至: {novel_file}")
