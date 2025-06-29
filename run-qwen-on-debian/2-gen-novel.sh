@@ -1,2 +1,2 @@
-source ~/qwen_env/bin/activate
+. ~/qwen_env/bin/activate
 python ./gen-novel.py
