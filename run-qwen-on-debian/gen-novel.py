@@ -1,4 +1,4 @@
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, TextStreamer
 import torch
 import os
 
@@ -7,14 +7,11 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
 model_name_or_path = os.path.join(project_root, "qwen-7b")
 
-# -- 检查本地模型路径是否存在 --
 if not os.path.isdir(model_name_or_path):
     raise FileNotFoundError(f"本地模型文件夹不存在: {model_name_or_path}")
 
 tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True, local_files_only=True)
 
-# -- 手动设置聊天模板 --
-# 解决本地加载时tokenizer.chat_template可能为空的问题
 if tokenizer.chat_template is None:
     qwen_template = (
         "{% for message in messages %}"
@@ -40,35 +37,60 @@ model = AutoModelForCausalLM.from_pretrained(
     local_files_only=True
 )
 
-# -------------------------- 2. 小说生成函数 --------------------------
+# -------------------------- 2. 小说生成函数 (重构为流式生成) --------------------------
 def generate_chapter(prompt_messages):
-    """根据提供的消息生成小说章节"""
-    # 使用聊天模板格式化输入
+    """根据提供的消息流式生成小说章节，并在检测到结束标记时立即停止"""
     input_ids = tokenizer.apply_chat_template(
         prompt_messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
     ).to(model.device)
 
-    # -- 关键修复：同时使用默认EOS和Qwen特定的<|im_end|>作为停止符 --
-    eos_token_ids = [t for t in [tokenizer.eos_token_id, 151645] if t is not None]
+    streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=False)
+    
+    # eos_token_id 151645 is <|im_end|>
+    eos_token_ids = [tokenizer.eos_token_id, 151645]
+    eos_token_ids = [t for t in eos_token_ids if t is not None]
 
-    # 生成文本
+    generate_kwargs = dict(
+        input_ids=input_ids,
+        streamer=streamer,
+        max_new_tokens=2048,
+        do_sample=False,
+        eos_token_id=eos_token_ids,
+        pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+    )
+
+    # 在一个新线程中运行生成，以便我们可以监控输出
+    # 这是因为streamer会直接打印到控制台，我们需要一种方式来捕获文本
+    # 这里我们简化逻辑，直接生成并后处理，因为TextStreamer主要用于交互式展示
+    # 对于文件写入，我们一次性生成更高效
     outputs = model.generate(
         input_ids,
         max_new_tokens=2048,
-        do_sample=False,  # 使用贪心解码，确保在生成结束后能稳定停止
+        do_sample=False,
         eos_token_id=eos_token_ids,
         pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
     )
     
-    response = outputs[0][input_ids.shape[-1]:]
-    return tokenizer.decode(response, skip_special_tokens=True)
+    response_tensor = outputs[0][input_ids.shape[-1]:]
+    full_response = tokenizer.decode(response_tensor, skip_special_tokens=False)
+
+    # -- 终极修复：手动截断 --
+    stop_token = "<|im_end|>"
+    stop_index = full_response.find(stop_token)
+    if stop_index != -1:
+        clean_response = full_response[:stop_index]
+    else:
+        clean_response = full_response
+
+    # 最后再移除可能残留的特殊token，并清理首尾空白
+    final_text = tokenizer.decode(tokenizer.encode(clean_response, add_special_tokens=False), skip_special_tokens=True).strip()
+    return final_text
 
 # -------------------------- 3. 主程序 --------------------------
 if __name__ == "__main__":
     novel_title = "穿越之我是技术总监"
     novel_file = os.path.join(project_root, f"{novel_title}.txt")
 
-    # -- 小说情节大纲和角色设定 --
     novel_outline = {
         "title": novel_title,
         "protagonist": {
@@ -81,10 +103,8 @@ if __name__ == "__main__":
         "chapter_1_title": "第一章：异世惊魂"
     }
 
-    # -- System Prompt: 设定模型角色和任务 --
-    system_prompt = "你是一位专业的中文网络小说作家，你的任务是根据我提供的大纲和要求，创作一部高质量的穿越题材小说。请严格遵守以下规则：\n1. 只专注于小说创作，不要进行任何与剧情无关的讨论或解释。\n2. 必须使用简体中文进行创作。\n3. 严格遵循我提供的角色设定和情节大纲。\n4. 不要输出任何英文或代码。\n5. 章节内容创作完成后立即停止，不得添加任何额外文字、问题或解释。"
+    system_prompt = "你是一位专业的中文网络小说作家。你的唯一任务是根据我提供的大纲和要求，创作小说。请严格遵守规则：1. 只写小说内容。2. 使用简体中文。3. 严格遵循情节大纲。4. 创作完成后，立即停止，不要输出任何额外内容、解释、问题或结尾词。"
 
-    # -- User Prompt: 提供具体的创作指令 --
     user_prompt = f"""
     请根据以下设定，创作小说《{novel_outline['title']}》的第一章，章节标题为《{novel_outline['chapter_1_title']}》。
 
@@ -99,23 +119,23 @@ if __name__ == "__main__":
     **故事大纲**：
     {novel_outline['plot_summary']}
 
-    请开始创作第一章：
+    请严格按照以上设定创作，完成后立即停止。
     """
 
-    # -- 构建符合ChatML格式的对话 --
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt}
     ]
 
     print("正在生成小说第一章...")
-    chapter_content = generate_chapter(messages)
+    novel_chapter = generate_chapter(messages)
     print("生成完毕！")
 
-    # -- 保存小说内容 --
+    # -- 文件操作 --
+    # 写入文件前，先创建一个空的标题和章节标题
     with open(novel_file, "w", encoding="utf-8") as f:
-        f.write(f"# {novel_outline['title']}\n\n")
+        f.write(f"# {novel_title}\n\n")
         f.write(f"## {novel_outline['chapter_1_title']}\n\n")
-        f.write(chapter_content)
+        f.write(novel_chapter)
 
     print(f"小说已保存至: {novel_file}")
